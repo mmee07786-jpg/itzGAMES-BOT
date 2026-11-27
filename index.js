@@ -99,4 +99,9 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(TOKEN);
+downloader.getYtDlp()
+  .then(() => client.login(TOKEN))
+  .catch((e) => {
+    console.error(e.message);
+    process.exit(1);
+  });
