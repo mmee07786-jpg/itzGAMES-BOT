@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, MessageFlags } = require('discord.js');
 const games = require('./games');
 
 const PREFIX = '!';
@@ -11,8 +11,39 @@ const client = new Client({
   ],
 });
 
-client.once('ready', () => {
+const slashCommands = [
+  new SlashCommandBuilder()
+    .setName('games')
+    .setDescription('يعرض طريقة فتح قائمة الألعاب'),
+].map((cmd) => cmd.toJSON());
+
+async function registerSlashCommands(appId) {
+  const token = process.env.DISCORD_TOKEN || process.env.TOKEN;
+  if (!token || !appId) return;
+
+  const rest = new REST({ version: '10' }).setToken(token);
+  await rest.put(Routes.applicationCommands(appId), { body: slashCommands });
+  console.log('✅ تم تسجيل أمر /games بنجاح');
+}
+
+client.once('ready', async () => {
   console.log(`✅ البوت شغال باسم: ${client.user.tag}`);
+  try {
+    await registerSlashCommands(client.application.id);
+  } catch (err) {
+    console.error('❌ فشل تسجيل أمر /games:', err);
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === 'games') {
+    await interaction.reply({
+      content: 'اكتب الامر\n!قائمة',
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+  }
 });
 
 client.on('messageCreate', async (msg) => {
