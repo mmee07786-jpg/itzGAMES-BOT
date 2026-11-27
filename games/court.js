@@ -22,7 +22,7 @@ async function run(msg) {
   const plaintiffId = msg.author.id;
   const defendant = msg.mentions.users.find((u) => !u.bot && u.id !== plaintiffId);
 
-  if (!defendant) return msg.reply('الاستخدام: `!court @عضو سبب القضية`');
+  if (!defendant) return msg.reply('الاستخدام: `!محكمة @عضو سبب القضية`');
   if (activeChannels.has(channelId)) return msg.reply('فيه قضية شغالة بهالروم الحين.');
 
   const reason = msg.content.slice(6).replace(/<@!?\d+>/g, '').trim() || 'بدون سبب';
@@ -104,9 +104,10 @@ async function run(msg) {
 }
 
 module.exports = {
-  cmd: 'court',
+  cmd: 'محكمة',
   name: 'المحكمة',
-  usage: '!court @عضو سبب',
+  usage: '!محكمة @عضو سبب',
   desc: 'ارفع قضية على عضو، والقاضي (عشوائي) والروم يصوتون على الحكم',
+  rules: 'تكتب `!محكمة @عضو سبب القضية`. البوت يختار قاضي عشوائي من المتكلمين مؤخراً. تنفتح أزرار تصويت (مذنب / بريء) لمدة دقيقة، وصوت القاضي يحسب بوزن 2. الطرفين ما يصوتون. الأغلبية تحدد الحكم، والتعادل ما ينطبق حكم.',
   run,
 };
