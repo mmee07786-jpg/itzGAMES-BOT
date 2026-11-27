@@ -1,6 +1,14 @@
 const { EmbedBuilder } = require('discord.js');
 
-const list = [require('./mafia'), require('./court'), require('./rps')];
+const list = [
+  require('./mafia'),
+  require('./court'),
+  require('./rps'),
+  require('./sentence'),
+  require('./flag'),
+  require('./scramble'),
+  require('./leaderboard'),
+];
 const byCmd = Object.fromEntries(list.map((g) => [g.cmd, g]));
 
 function listEmbed() {
