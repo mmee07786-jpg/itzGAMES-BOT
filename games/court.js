@@ -25,7 +25,7 @@ async function run(msg) {
   if (!defendant) return msg.reply('الاستخدام: `!محكمة @عضو سبب القضية`');
   if (activeChannels.has(channelId)) return msg.reply('فيه قضية شغالة بهالروم الحين.');
 
-  const reason = msg.content.slice(6).replace(/<@!?\d+>/g, '').trim() || 'بدون سبب';
+  const reason = msg.content.replace(/^\S+/, '').replace(/<@!?\d+>/g, '').trim() || 'بدون سبب';
 
   // اختيار القاضي من الأعضاء اللي تكلموا مؤخراً (طلب واحد للـ API، سريع)
   const recent = await msg.channel.messages.fetch({ limit: 50 }).catch(() => null);
