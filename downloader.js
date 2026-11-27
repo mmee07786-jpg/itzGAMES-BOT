@@ -3,7 +3,8 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { MAX_UPLOAD_MB, DOWNLOAD_DIR, COOKIES_FILE, YTDLP_PATH } = require('./config');
+const { MAX_UPLOAD_MB, DOWNLOAD_DIR, COOKIES_FILE } = require('./config');
+const { ensureYtDlp, getFfmpegPath } = require('./setup');
 
 const ALLOWED_DOMAINS = [
   'tiktok.com',
@@ -29,9 +30,18 @@ function isSupported(url) {
   }
 }
 
-function runYtDlp(args, timeoutMs = 180000) {
+let ytdlpPromise = null;
+function getYtDlp() {
+  if (!ytdlpPromise) ytdlpPromise = ensureYtDlp();
+  return ytdlpPromise;
+}
+
+async function runYtDlp(args, timeoutMs = 180000) {
+  const bin = await getYtDlp();
+  const ffmpeg = getFfmpegPath();
+  if (ffmpeg) args = ['--ffmpeg-location', ffmpeg, ...args];
   return new Promise((resolve, reject) => {
-    const proc = spawn(YTDLP_PATH, args, { windowsHide: true });
+    const proc = spawn(bin, args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -41,13 +51,14 @@ function runYtDlp(args, timeoutMs = 180000) {
 
     proc.stdout.on('data', (d) => (stdout += d));
     proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('error', () => {
+    proc.on('error', (e) => {
       clearTimeout(timer);
-      reject(new Error('yt-dlp غير منصّب.'));
+      reject(new Error('تعذر تشغيل yt-dlp: ' + e.message));
     });
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) return resolve({ stdout, stderr });
+      console.error('yt-dlp stderr:', stderr.slice(-800));
       reject(mapError(stderr));
     });
   });
@@ -141,4 +152,4 @@ async function cleanup(workdir) {
   await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
 }
 
-module.exports = { isSupported, download, cleanup, DownloadError };
+module.exports = { isSupported, download, cleanup, DownloadError, getYtDlp };
