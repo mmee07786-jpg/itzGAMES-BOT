@@ -92,6 +92,7 @@ client.on('interactionCreate', async (interaction) => {
     if (err instanceof downloader.DownloadError) msg = `❌ ${err.message}`;
     else if (err.code === 40005 || err.status === 413) msg = '❌ الملف كبير على ديسكورد.';
     else console.error(err);
+    cooldowns.delete(interaction.user.id); // لا كولداون لو فشل التحميل
     await interaction.editReply({ content: msg }).catch(() => {});
   } finally {
     release();
