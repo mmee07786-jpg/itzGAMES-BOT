@@ -31,6 +31,19 @@ const prism = require('prism-media');
 
 const TOKEN = process.env.DISCORD_TOKEN || '';
 const GUILD_ID = process.env.GUILD_ID || '';
+// اختياري: كوكيز يوتيوب بصيغة JSON (مصفوفة) عشان يوتيوب يقبل السيرفر
+const YT_COOKIES = process.env.YT_COOKIES || '';
+
+function buildYtAgent() {
+  if (!YT_COOKIES) return undefined;
+  try {
+    return ytdl.createAgent(JSON.parse(YT_COOKIES));
+  } catch (e) {
+    console.error('❌ YT_COOKIES مو JSON صالح:', e.message);
+    return undefined;
+  }
+}
+const ytAgent = buildYtAgent();
 
 if (!TOKEN) {
   console.error('❌ حط DISCORD_TOKEN في متغيرات البيئة');
@@ -42,6 +55,22 @@ process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e))
 // ================= YouTube =================
 
 class PlaybackError extends Error {}
+
+// يحوّل أخطاء يوتيوب لرسائل مفهومة
+function mapYtError(e) {
+  if (e instanceof PlaybackError) return e;
+  const m = String(e?.message || e);
+  if (/not a bot|sign in/i.test(m)) {
+    return new PlaybackError(
+      'يوتيوب يطلب تحقق "لست روبوت" من سيرفر البوت. لازم تضيف كوكيز يوتيوب في YT_COOKIES، أو تغيّر السيرفر.'
+    );
+  }
+  if (/age|private|unavailable|not available|removed/i.test(m)) {
+    return new PlaybackError('هذا الفيديو غير متاح (خاص، مقيّد بالعمر، أو محذوف). جرّب رابط ثاني.');
+  }
+  console.error('YouTube error:', m);
+  return new PlaybackError('ما قدرت أجيب الفيديو من يوتيوب، جرّب رابط ثاني.');
+}
 
 function isYoutubeUrl(text) {
   try {
@@ -55,7 +84,9 @@ function isYoutubeUrl(text) {
 async function resolveSong(input) {
   const text = input.trim();
   if (isYoutubeUrl(text)) {
-    const info = await ytdl.getBasicInfo(text);
+    const info = await ytdl.getBasicInfo(text, { agent: ytAgent }).catch((e) => {
+      throw mapYtError(e);
+    });
     return { url: text, title: info.videoDetails.title };
   }
   const result = await ytSearch(text);
@@ -73,11 +104,13 @@ function pickOpusFormat(info) {
 }
 
 async function createResource(url) {
-  const info = await ytdl.getInfo(url);
+  const info = await ytdl.getInfo(url, { agent: ytAgent }).catch((e) => {
+    throw mapYtError(e);
+  });
   const format = pickOpusFormat(info);
   if (!format) throw new PlaybackError('هذا الفيديو ما فيه صيغة صوت مدعومة، جرّب فيديو ثاني.');
 
-  const stream = ytdl.downloadFromInfo(info, { format });
+  const stream = ytdl.downloadFromInfo(info, { format, agent: ytAgent });
   const opusStream = stream.pipe(new prism.opus.WebmDemuxer());
   stream.on('error', () => {});
   opusStream.on('error', () => {});
