@@ -4,7 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { MAX_UPLOAD_MB, DOWNLOAD_DIR, COOKIES_FILE } = require('./config');
-const { ensureYtDlp, getFfmpegPath, TMP_DIR } = require('./setup');
+const { ensureYtDlp, getFfmpegPath, hasFfmpeg, cleanTemp, TMP_DIR } = require('./setup');
 
 const ALLOWED_DOMAINS = [
   'tiktok.com',
@@ -60,6 +60,7 @@ async function runYtDlp(args, timeoutMs = 180000) {
     });
     proc.on('close', (code) => {
       clearTimeout(timer);
+      cleanTemp(TMP_DIR);
       if (code === 0) return resolve({ stdout, stderr });
       console.error('yt-dlp stderr:', stderr.slice(-800));
       reject(mapError(stderr));
@@ -115,12 +116,11 @@ async function download(url, kind) {
 
   try {
     if (kind === 'audio') {
-      const args = [
-        ...baseArgs(workdir),
-        '-f', 'bestaudio/best',
-        '-x', '--audio-format', 'mp3', '--audio-quality', '192K',
-        url,
-      ];
+      // بدون ffmpeg: ننزل الصوت مثل ما هو (m4a) بدون تحويل لـ mp3
+      const args = hasFfmpeg()
+        ? [...baseArgs(workdir), '-f', 'bestaudio/best',
+           '-x', '--audio-format', 'mp3', '--audio-quality', '192K', url]
+        : [...baseArgs(workdir), '-f', 'bestaudio[ext=m4a]/bestaudio/best', url];
       const { stdout } = await runYtDlp(args);
       const file = await largestFile(workdir);
       if (!file) throw new DownloadError('ما لقيت ملف بعد التحميل.');
@@ -131,10 +131,14 @@ async function download(url, kind) {
 
     for (const h of QUALITY_LADDER) {
       await emptyDir(workdir);
-      const format =
-        `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/` +
-        `bv*[height<=${h}]+ba/b[height<=${h}]/b`;
-      const args = [...baseArgs(workdir), '-f', format, '--merge-output-format', 'mp4', url];
+      // بدون ffmpeg: ملف واحد جاهز (فيديو+صوت) بدون دمج
+      const format = hasFfmpeg()
+        ? `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/` +
+          `bv*[height<=${h}]+ba/b[height<=${h}]/b`
+        : `b[height<=${h}][ext=mp4]/b[height<=${h}]/b`;
+      const args = hasFfmpeg()
+        ? [...baseArgs(workdir), '-f', format, '--merge-output-format', 'mp4', url]
+        : [...baseArgs(workdir), '-f', format, url];
       const { stdout } = await runYtDlp(args);
       const file = await largestFile(workdir);
       if (!file) throw new DownloadError('ما لقيت ملف بعد التحميل.');
