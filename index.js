@@ -14,6 +14,10 @@ const client = new Client({
 
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
+if (!fs.existsSync(commandsPath)) {
+  console.error('❌ مجلد commands ناقص على المستودع. لازم يكون فيه play.js و stop.js داخل مجلد اسمه commands بجانب index.js');
+  process.exit(1);
+}
 const commandFiles = fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'));
 
 const commandData = [];
