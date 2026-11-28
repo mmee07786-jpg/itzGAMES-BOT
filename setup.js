@@ -78,4 +78,26 @@ function getFfmpegPath() {
   }
 }
 
-module.exports = { ensureYtDlp, getFfmpegPath, TMP_DIR };
+let ffmpegOk = null;
+// هل ffmpeg متوفر؟ (من ffmpeg-static أو من النظام)
+function hasFfmpeg() {
+  if (ffmpegOk !== null) return ffmpegOk;
+  if (getFfmpegPath()) return (ffmpegOk = true);
+  try {
+    ffmpegOk = spawnSync('ffmpeg', ['-version']).status === 0;
+  } catch {
+    ffmpegOk = false;
+  }
+  return ffmpegOk;
+}
+
+// تنظيف المجلدات المؤقتة (لتوفير المساحة)
+function cleanTemp(dir) {
+  try {
+    for (const n of fs.readdirSync(dir)) {
+      fs.rmSync(path.join(dir, n), { recursive: true, force: true });
+    }
+  } catch {}
+}
+
+module.exports = { ensureYtDlp, getFfmpegPath, hasFfmpeg, cleanTemp, TMP_DIR };
