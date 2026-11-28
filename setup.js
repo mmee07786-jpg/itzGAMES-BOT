@@ -1,158 +1,81 @@
-const { spawn } = require('child_process');
-const fs = require('fs/promises');
-const fsSync = require('fs');
+// يحمّل yt-dlp تلقائياً (للاستضافات اللي ما تسمح بتنصيب برامج)
+const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { MAX_UPLOAD_MB, DOWNLOAD_DIR, COOKIES_FILE } = require('./config');
-const { ensureYtDlp, getFfmpegPath, TMP_DIR } = require('./setup');
+const os = require('os');
+const { spawnSync } = require('child_process');
 
-const ALLOWED_DOMAINS = [
-  'tiktok.com',
-  'pinterest.com', 'pin.it',
-  'instagram.com',
-  'twitter.com', 'x.com', 't.co',
-  'youtube.com', 'youtu.be',
-];
+const BIN_DIR = path.join(__dirname, 'bin');
+const TMP_DIR = path.join(BIN_DIR, 'tmp'); // مجلد مؤقت خاص بالبوت
+const REFRESH_MS = 12 * 60 * 60 * 1000; // تحديث كل 12 ساعة
 
-// لو الملف أكبر من حد الرفع ينزل بجودة أقل
-const QUALITY_LADDER = [1080, 720, 480, 360, 240];
-
-class DownloadError extends Error {}
-
-function isSupported(url) {
+function hasPython() {
   try {
-    const u = new URL(url);
-    if (!['http:', 'https:'].includes(u.protocol)) return false;
-    const host = u.hostname.toLowerCase();
-    return ALLOWED_DOMAINS.some((d) => host === d || host.endsWith('.' + d));
+    return spawnSync('python3', ['--version']).status === 0;
   } catch {
     return false;
   }
 }
 
-let ytdlpPromise = null;
-function getYtDlp() {
-  if (!ytdlpPromise) ytdlpPromise = ensureYtDlp();
-  return ytdlpPromise;
+// نسخة بايثون (zipapp) ما تحتاج فك ضغط، وهي الأفضل لو بايثون موجود.
+// غيرها نستخدم النسخة المستقلة.
+function pick() {
+  const p = process.platform;
+  const a = os.arch();
+  if (p === 'win32') return { asset: 'yt-dlp.exe', file: 'yt-dlp-bin.exe' };
+  if (p === 'darwin') return { asset: 'yt-dlp_macos', file: 'yt-dlp-bin' };
+  if (hasPython()) return { asset: 'yt-dlp', file: 'yt-dlp-py' };
+  return {
+    asset: a === 'arm64' ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux',
+    file: 'yt-dlp-bin',
+  };
 }
 
-async function runYtDlp(args, timeoutMs = 180000) {
-  const bin = await getYtDlp();
-  const ffmpeg = getFfmpegPath();
-  if (ffmpeg) args = ['--ffmpeg-location', ffmpeg, ...args];
-  return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args, {
-      windowsHide: true,
-      env: { ...process.env, TMPDIR: TMP_DIR, TEMP: TMP_DIR, TMP: TMP_DIR },
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      proc.kill('SIGKILL');
-      reject(new DownloadError('انتهى وقت التحميل.'));
-    }, timeoutMs);
-
-    proc.stdout.on('data', (d) => (stdout += d));
-    proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('error', (e) => {
-      clearTimeout(timer);
-      reject(new Error('تعذر تشغيل yt-dlp: ' + e.message));
-    });
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) return resolve({ stdout, stderr });
-      console.error('yt-dlp stderr:', stderr.slice(-800));
-      reject(mapError(stderr));
-    });
-  });
+async function downloadBinary(asset, dest) {
+  const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`;
+  const res = await fetch(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const tmp = dest + '.tmp';
+  fs.writeFileSync(tmp, buf);
+  fs.chmodSync(tmp, 0o755);
+  fs.renameSync(tmp, dest);
 }
 
-function mapError(stderr) {
-  const s = (stderr || '').toLowerCase();
-  if (s.includes('login') || s.includes('cookies') || s.includes('sign in'))
-    return new DownloadError('الموقع يطلب تسجيل دخول (جرّب إضافة كوكيز).');
-  if (s.includes('private')) return new DownloadError('الفيديو خاص.');
-  if (s.includes('no video')) return new DownloadError('الرابط ما فيه فيديو.');
-  return new DownloadError('فشل التحميل، تأكد من الرابط.');
-}
+async function ensureYtDlp() {
+  if (process.env.YTDLP_PATH) return process.env.YTDLP_PATH;
 
-function baseArgs(workdir) {
-  const args = [
-    '--no-playlist',
-    '--no-warnings',
-    '--restrict-filenames',
-    '--socket-timeout', '20',
-    '--retries', '3',
-    '-o', path.join(workdir, '%(id)s.%(ext)s'),
-    '--print', '%(title)s',
-    '--no-simulate',
-  ];
-  if (COOKIES_FILE && fsSync.existsSync(COOKIES_FILE)) {
-    args.push('--cookies', COOKIES_FILE);
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  // نظّف مخلفات فك الضغط القديمة
+  for (const n of fs.readdirSync(TMP_DIR)) {
+    fs.rmSync(path.join(TMP_DIR, n), { recursive: true, force: true });
   }
-  return args;
-}
+  // احذف النسخة القديمة اللي كانت تسبب المشكلة
+  fs.rmSync(path.join(BIN_DIR, 'yt-dlp'), { force: true });
 
-async function largestFile(dir) {
-  const names = await fs.readdir(dir);
-  let best = null;
-  for (const n of names) {
-    const p = path.join(dir, n);
-    const st = await fs.stat(p);
-    if (st.isFile() && (!best || st.size > best.size)) best = { path: p, size: st.size };
+  const { asset, file } = pick();
+  const dest = path.join(BIN_DIR, file);
+  const exists = fs.existsSync(dest);
+  const stale = exists && Date.now() - fs.statSync(dest).mtimeMs > REFRESH_MS;
+
+  if (!exists || stale) {
+    try {
+      console.log(`⬇️  تحميل/تحديث yt-dlp (${asset}) ...`);
+      await downloadBinary(asset, dest);
+      console.log('✅ yt-dlp جاهز');
+    } catch (e) {
+      if (!exists) throw new Error('فشل تحميل yt-dlp: ' + e.message);
+      console.warn('⚠️ فشل التحديث، يستخدم النسخة القديمة:', e.message);
+    }
   }
-  return best;
+  return dest;
 }
 
-async function emptyDir(dir) {
-  for (const n of await fs.readdir(dir)) await fs.rm(path.join(dir, n), { force: true });
-}
-
-async function download(url, kind) {
-  const limit = MAX_UPLOAD_MB * 1024 * 1024;
-  const workdir = path.join(DOWNLOAD_DIR, crypto.randomUUID());
-  await fs.mkdir(workdir, { recursive: true });
-
+function getFfmpegPath() {
   try {
-    if (kind === 'audio') {
-      const args = [
-        ...baseArgs(workdir),
-        '-f', 'bestaudio/best',
-        '-x', '--audio-format', 'mp3', '--audio-quality', '192K',
-        url,
-      ];
-      const { stdout } = await runYtDlp(args);
-      const file = await largestFile(workdir);
-      if (!file) throw new DownloadError('ما لقيت ملف بعد التحميل.');
-      if (file.size > limit)
-        throw new DownloadError(`الصوت أكبر من حد الرفع (${MAX_UPLOAD_MB}MB).`);
-      return { filePath: file.path, title: firstLine(stdout), workdir };
-    }
-
-    for (const h of QUALITY_LADDER) {
-      await emptyDir(workdir);
-      const format =
-        `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/` +
-        `bv*[height<=${h}]+ba/b[height<=${h}]/b`;
-      const args = [...baseArgs(workdir), '-f', format, '--merge-output-format', 'mp4', url];
-      const { stdout } = await runYtDlp(args);
-      const file = await largestFile(workdir);
-      if (!file) throw new DownloadError('ما لقيت ملف بعد التحميل.');
-      if (file.size <= limit) return { filePath: file.path, title: firstLine(stdout), workdir };
-    }
-    throw new DownloadError(`الفيديو أكبر من حد الرفع (${MAX_UPLOAD_MB}MB) حتى بأقل جودة.`);
-  } catch (err) {
-    await cleanup(workdir);
-    throw err;
+    return require('ffmpeg-static') || null;
+  } catch {
+    return null;
   }
 }
 
-function firstLine(s) {
-  return (s || '').split('\n')[0].trim() || 'video';
-}
-
-async function cleanup(workdir) {
-  await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
-}
-
-module.exports = { isSupported, download, cleanup, DownloadError, getYtDlp };
+module.exports = { ensureYtDlp, getFfmpegPath, TMP_DIR };
