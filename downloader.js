@@ -4,7 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { MAX_UPLOAD_MB, DOWNLOAD_DIR, COOKIES_FILE } = require('./config');
-const { ensureYtDlp, getFfmpegPath } = require('./setup');
+const { ensureYtDlp, getFfmpegPath, TMP_DIR } = require('./setup');
 
 const ALLOWED_DOMAINS = [
   'tiktok.com',
@@ -41,7 +41,10 @@ async function runYtDlp(args, timeoutMs = 180000) {
   const ffmpeg = getFfmpegPath();
   if (ffmpeg) args = ['--ffmpeg-location', ffmpeg, ...args];
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args, { windowsHide: true });
+    const proc = spawn(bin, args, {
+      windowsHide: true,
+      env: { ...process.env, TMPDIR: TMP_DIR, TEMP: TMP_DIR, TMP: TMP_DIR },
+    });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
